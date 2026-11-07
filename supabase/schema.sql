@@ -259,3 +259,39 @@ end $$;
 revoke execute on function public.handle_new_user() from public, anon, authenticated;
 revoke execute on function public.join_house(text, jsonb), public.my_home(), public.update_my_profile(jsonb) from public, authenticated;
 drop function if exists public.house_for_code(text);
+
+-- ---------- security hardening (applied 2026-11-07) ----------
+-- 1. Remove everything left over from the old resident portal (smaller attack surface).
+drop policy if exists "resident: payments" on public.payments;
+drop policy if exists "resident: own documents" on storage.objects;
+drop table if exists public.payment_claims;
+drop function if exists public.join_house(text, jsonb);
+drop function if exists public.my_home();
+drop function if exists public.update_my_profile(jsonb);
+drop function if exists public.i_am_approved();
+drop function if exists public.my_owner_id();
+drop function if exists public.my_tenant_id();
+alter table public.tenants drop column if exists auth_user_id;
+
+-- 2. Signed-out visitors get no table privileges at all; TRUNCATE (which ignores row-level security) is removed.
+revoke all on public.owners, public.houses, public.tenants, public.payments, public.reminders from anon;
+revoke truncate, trigger, references on public.owners, public.houses, public.tenants, public.payments, public.reminders from authenticated;
+alter default privileges in schema public revoke all on tables from anon;
+alter default privileges in schema public revoke truncate, trigger, references on tables from authenticated;
+
+-- 3. Documents bucket: private, max 5 MB, only photos and PDFs.
+update storage.buckets
+   set public = false,
+       file_size_limit = 5242880,
+       allowed_mime_types = array['image/jpeg', 'image/png', 'image/webp', 'application/pdf']
+ where id = 'documents';
+
+-- 4. Sanity limits so bad or huge input can't be stored.
+alter table public.tenants
+  add constraint tenants_name_len check (char_length(name) between 1 and 120),
+  add constraint tenants_phone_len check (char_length(phone) between 7 and 20),
+  add constraint tenants_email_len check (char_length(email) <= 254),
+  add constraint tenants_notes_len check (notes is null or char_length(notes) <= 2000),
+  add constraint tenants_rent_max check (rent <= 10000000 and deposit <= 100000000);
+alter table public.houses add constraint houses_name_len check (char_length(name) between 1 and 120);
+alter table public.owners add constraint owners_pay_link_https check (pay_link is null or pay_link = '' or pay_link ~* '^https://');

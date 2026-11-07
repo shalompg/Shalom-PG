@@ -193,11 +193,18 @@ async function uploadFiles(ownerId, tenantId, patch) {
   }
   return out
 }
+const signed = new Map() // path -> { url, until }
+const LINK_TTL = 60 * 60 // seconds: document links stop working after 1 hour
 async function signFiles(tenants) {
   const paths = tenants.flatMap((t) => [t.photoPath, t.idDocPath]).filter(Boolean)
   if (!paths.length) return tenants
-  const { data } = await sb.storage.from(BUCKET).createSignedUrls(paths, 60 * 60 * 6)
-  const url = Object.fromEntries((data || []).filter((x) => x.signedUrl).map((x) => [x.path, x.signedUrl]))
+  const now = Date.now()
+  const stale = paths.filter((p) => !(signed.get(p)?.until > now))
+  if (stale.length) {
+    const { data } = await sb.storage.from(BUCKET).createSignedUrls(stale, LINK_TTL)
+    for (const x of data || []) if (x.signedUrl) signed.set(x.path, { url: x.signedUrl, until: now + (LINK_TTL - 600) * 1000 })
+  }
+  const url = Object.fromEntries(paths.map((p) => [p, signed.get(p)?.url]))
   return tenants.map((t) => ({
     ...t,
     photo: url[t.photoPath] || '',
@@ -298,6 +305,7 @@ export function signOut() {
   if (cloud) {
     sb.auth.signOut()
     db = { ...EMPTY }
+    signed.clear()
   }
   setSession(null)
 }
@@ -320,7 +328,7 @@ export function updateOwner(id, patch) {
 
 /* ---------- houses ---------- */
 export function addHouse(ownerId, { name, address }) {
-  const h = { id: uid(), ownerId, name: name.trim(), address: (address || '').trim(), hue: Math.floor(Math.random() * 360), joinCode: makeCode(), createdAt: Date.now() }
+  const h = { id: uid(), ownerId, name: text(name, 120), address: text(address, 200), hue: Math.floor(Math.random() * 360), joinCode: makeCode(), createdAt: Date.now() }
   patchCol('houses', (a) => [...a, h])
   remote(() => sb.from('houses').insert(houseTo(h)))
   return h
@@ -342,16 +350,47 @@ const blankTenant = {
   joinedOn: isoDay(new Date()), photo: '', idType: 'Aadhaar', idDoc: null,
   emergencyName: '', emergencyPhone: '', channel: 'whatsapp', notes: '',
 }
+// Strip invisible control characters and cap length on free text.
+const text = (v, max) => String(v ?? '').replace(/[\u0000-\u0009\u000b-\u001f\u007f]/g, ' ').trim().slice(0, max)
+const TEXT_FIELDS = { name: 120, occupation: 120, room: 40, emergencyName: 120, idType: 40, notes: 2000 }
+export const EMAIL_RE = /^[^\s@<>()]+@[^\s@<>()]+\.[a-z]{2,}$/i
+/** Indian mobile → 10 digits (drops +91 / 0 prefixes). Returns '' if it isn't a valid number. */
+export function normPhone(v) {
+  let d = digits(v)
+  if (d.length === 12 && d.startsWith('91')) d = d.slice(2)
+  if (d.length === 11 && d.startsWith('0')) d = d.slice(1)
+  return /^[6-9]\d{9}$/.test(d) ? d : ''
+}
 const clean = (t) => {
-  if ('rent' in t) t.rent = Number(t.rent) || 0
-  if ('deposit' in t) t.deposit = Number(t.deposit) || 0
-  if ('dueDay' in t) t.dueDay = Math.min(28, Math.max(1, Number(t.dueDay) || 1))
+  for (const [k, max] of Object.entries(TEXT_FIELDS)) if (k in t) t[k] = text(t[k], max)
+  if ('rent' in t) t.rent = Math.round(Number(t.rent) || 0)
+  if ('deposit' in t) t.deposit = Math.round(Number(t.deposit) || 0)
+  if ('dueDay' in t) t.dueDay = Math.min(28, Math.max(1, Math.round(Number(t.dueDay)) || 1))
   if ('email' in t) t.email = normEmail(t.email)
+  if ('phone' in t) t.phone = normPhone(t.phone) || text(t.phone, 20)
+  if ('emergencyPhone' in t) t.emergencyPhone = normPhone(t.emergencyPhone) || text(t.emergencyPhone, 20)
   return t
+}
+/** Returns a list of problems with a resident record (empty = OK). */
+export function checkTenant(t) {
+  const errs = []
+  if (!t.name) errs.push('Name is missing')
+  if (!normPhone(t.phone)) errs.push('Mobile must be a 10-digit Indian number')
+  if (!EMAIL_RE.test(t.email || '')) errs.push('Email is missing or invalid')
+  if (!(t.rent > 0) || t.rent > 10000000) errs.push('Monthly rent is missing')
+  if (!(t.deposit >= 0) || t.deposit > 100000000) errs.push('Deposit is missing')
+  if (!(t.dueDay >= 1 && t.dueDay <= 28)) errs.push('Due day must be 1–28')
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(t.joinedOn || '') || isNaN(new Date(t.joinedOn))) errs.push('Move-in date is invalid')
+  return errs
+}
+const assertTenant = (t) => {
+  const e = checkTenant(t)
+  if (e.length) throw new Error(e[0] + '.')
 }
 
 export function addTenant(ownerId, houseId, data) {
   const t = clean({ ...blankTenant, ...data, id: uid(), ownerId, houseId, status: 'approved', active: true, createdAt: Date.now() })
+  assertTenant(t)
   patchCol('tenants', (a) => [...a, t])
   remote(async () => {
     const withFiles = await uploadFiles(ownerId, t.id, t)
@@ -360,15 +399,59 @@ export function addTenant(ownerId, houseId, data) {
   return t
 }
 
+/**
+ * Add many residents to one house at once (Excel import). Rows must already be checked.
+ * Returns the created residents so the import can be undone.
+ */
+export async function addTenants(ownerId, houseId, rows) {
+  const list = rows.map((data) => clean({ ...blankTenant, ...data, id: uid(), ownerId, houseId, status: 'approved', active: true, createdAt: Date.now() }))
+  list.forEach(assertTenant)
+  if (cloud) {
+    // One request, all-or-nothing: either every row is saved or none are.
+    must(await sb.from('tenants').insert(list.map((t) => ({ id: t.id, owner_id: ownerId, ...tenantTo(t) }))))
+  }
+  patchCol('tenants', (a) => [...a, ...list])
+  return list
+}
+
 /** Owner edits (any field). */
 export function updateTenant(id, patch) {
   patch = clean({ ...patch })
   delete patch.passHash
-  patchCol('tenants', (a) => a.map((t) => (t.id === id ? { ...t, ...patch } : t)))
-  const t = db.tenants.find((x) => x.id === id)
+  const before = db.tenants.find((x) => x.id === id)
+  const merged = { ...before, ...patch }
+  if (merged.active) assertTenant(merged)
+  patchCol('tenants', (a) => a.map((t) => (t.id === id ? merged : t)))
   remote(async () => {
-    const withFiles = await uploadFiles(t.ownerId, id, patch)
-    return sb.from('tenants').update(tenantTo(withFiles)).eq('id', id)
+    const withFiles = await uploadFiles(before.ownerId, id, patch)
+    const res = await sb.from('tenants').update(tenantTo(withFiles)).eq('id', id)
+    if (res.error) return res
+    // Replaced documents: delete the old file so no stale copy of someone's ID is left behind.
+    const old = [
+      withFiles.photoPath && before.photoPath !== withFiles.photoPath && before.photoPath,
+      withFiles.idDocPath && before.idDocPath !== withFiles.idDocPath && before.idDocPath,
+    ].filter(Boolean)
+    if (old.length) await sb.storage.from(BUCKET).remove(old)
+    patchCol('tenants', (a) => a.map((t) => (t.id === id ? { ...t, photoPath: withFiles.photoPath || t.photoPath, idDocPath: withFiles.idDocPath || t.idDocPath } : t)))
+    return res
+  })
+}
+
+/** Permanently erase a resident: their record, payments, reminders, photo and ID document. */
+export async function deleteTenant(id) {
+  const t = db.tenants.find((x) => x.id === id)
+  if (!t) return
+  if (cloud) {
+    const { data: files } = await sb.storage.from(BUCKET).list(`${t.ownerId}/${id}`, { limit: 100 })
+    const paths = (files || []).map((f) => `${t.ownerId}/${id}/${f.name}`)
+    if (paths.length) must(await sb.storage.from(BUCKET).remove(paths))
+    must(await sb.from('tenants').delete().eq('id', id))
+  }
+  commit({
+    ...db,
+    tenants: db.tenants.filter((x) => x.id !== id),
+    payments: db.payments.filter((p) => p.tenantId !== id),
+    reminders: db.reminders.filter((x) => x.tenantId !== id),
   })
 }
 
@@ -482,7 +565,10 @@ export function rentState(t, payments, remindDays = 3) {
 /* ---------- backup ---------- */
 export function exportOwner(ownerId) {
   const houses = db.houses.filter((h) => h.ownerId === ownerId)
-  const tenants = db.tenants.filter((t) => t.ownerId === ownerId).map(({ passHash, ...t }) => t) // eslint-disable-line no-unused-vars
+  // In the cloud, leave out the temporary document links so the file can't be used to open anyone's ID.
+  const tenants = db.tenants
+    .filter((t) => t.ownerId === ownerId)
+    .map(({ passHash, ...t }) => (cloud ? { ...t, photo: '', idDoc: t.idDoc ? { ...t.idDoc, data: '' } : null } : t)) // eslint-disable-line no-unused-vars
   const ids = new Set(tenants.map((t) => t.id))
   return {
     app: 'shalom-pg', version: 1, exportedAt: new Date().toISOString(),

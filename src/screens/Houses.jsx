@@ -7,6 +7,7 @@ import { Field, Sheet, Empty, listParent, listItem, useToast, ease } from '../ui
 import { go } from '../router'
 import { useOwner, RentRow } from './Owner'
 import { TenantFormSheet } from './TenantSheet'
+import { ImportButton } from './Import'
 
 export function HouseArt({ hue, id, big }) {
   return (
@@ -173,11 +174,14 @@ export function HouseDetail({ id }) {
       <section className="block">
         <div className="block-head">
           <h2><Users size={18} /> Residents</h2>
-          <button className="btn sm primary" onClick={() => setAdding(true)}><UserPlus size={14} /> Add resident</button>
+          <div className="btn-row">
+            <ImportButton houseId={h.id} />
+            <button className="btn sm primary" onClick={() => setAdding(true)}><UserPlus size={14} /> Add resident</button>
+          </div>
         </div>
         {residents.length === 0 ? (
           <Empty icon={Users} title="No one here yet">
-            Add the people staying here, with their photo and ID proof.
+            Add people one by one, or import everyone at once from an Excel sheet.
           </Empty>
         ) : (
           <motion.div className="list" variants={listParent} initial="initial" animate="animate">

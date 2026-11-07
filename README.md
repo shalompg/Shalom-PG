@@ -52,6 +52,34 @@ full-screen like an app.
 
 ---
 
+## Adding many residents at once (Excel)
+
+Open a house → **Import from Excel** → **Download template**, fill one row per person, upload it.
+Every row is checked before anything is saved (10-digit mobile, email, rent, deposit, due day 1–28),
+problems are shown row by row, and good rows are added in one go (with Undo). People already added
+are detected by mobile number, so re-importing a fixed sheet won't create duplicates.
+Photos and ID proofs are added per person afterwards.
+
+## Two (or more) owners
+
+Each owner signs in with their own account. The database enforces separation (row-level security):
+an owner can only see and change their own houses, residents, payments and documents. This was
+tested with two accounts: neither could read, edit, delete, move or upload into the other's data.
+
+## Security summary
+
+- **Data:** Postgres row-level security on every table; signed-out visitors have no access at all.
+- **Documents:** private storage, one folder per owner, photos and PDFs only (max 5 MB, PDF signature
+  checked), opened through links that expire after 1 hour. Photos are re-encoded in the browser, which
+  strips hidden metadata such as GPS location. Replaced documents are deleted, and **Delete permanently**
+  (for moved-out residents) erases their record, payments, photo and ID.
+- **Website:** strict Content-Security-Policy (only this site and Supabase), no-referrer, refuses to
+  load inside other sites' frames, no source maps, dependencies audited (0 known vulnerabilities).
+- **Input limits:** validated in the app and again by database constraints.
+- **Recommended dashboard settings** (Supabase → Authentication): turn off *Allow new users to sign up*;
+  turn on *Leaked password protection* if your plan offers it; use strong passwords for owners.
+- Backups downloaded from Settings contain personal data: store them safely.
+
 ## Developing locally
 
 ```bash

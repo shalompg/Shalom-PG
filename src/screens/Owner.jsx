@@ -506,7 +506,7 @@ function Settings() {
 
         <section className="card">
           <h2>Getting paid</h2>
-          <Field label="Payment link (optional)" value={form.payLink} onChange={set('payLink')} type="url" placeholder="https://razorpay.me/@yourpg" hint="A Razorpay / PhonePe / Paytm payment page. This is what goes into WhatsApp and email reminders." />
+          <Field label="Payment link (optional)" value={form.payLink} onChange={set('payLink')} type="url" pattern="https://.*" title="Must start with https://" maxLength={300} placeholder="https://razorpay.me/@yourpg" hint="A Razorpay / PhonePe / Paytm payment page. This is what goes into WhatsApp and email reminders." />
         </section>
 
         <section className="card">
@@ -550,7 +550,7 @@ function Settings() {
       <section className="card">
         <h2>Your data</h2>
         <p className="muted small">
-          <ShieldCheck size={14} /> Everything is private to your account. Download a backup now and then — it includes residents, documents and payments.
+          <ShieldCheck size={14} /> Everything is private to your account. The backup file contains residents’ personal details, so keep it somewhere safe and don’t share it.
         </p>
         <div className="btn-row">
           <button

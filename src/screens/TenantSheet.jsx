@@ -1,10 +1,10 @@
 import { useEffect, useState } from 'react'
 import { motion } from 'framer-motion'
 import {
-  Phone, MessageCircle, Mail, Bell, Check, FileText, Pencil, LogOut, ShieldCheck, Copy, Undo2, X, Send, Wallet,
+  Phone, MessageCircle, Mail, Bell, Check, FileText, Pencil, LogOut, ShieldCheck, Copy, Undo2, X, Send, Wallet, Trash2,
 } from 'lucide-react'
 import {
-  addTenant, updateTenant, moveOut, markPaid, undoPayment, logReminder, periodOf, today, isoDay,
+  addTenant, updateTenant, deleteTenant, moveOut, markPaid, undoPayment, logReminder, periodOf, today, isoDay,
 } from '../store'
 import { inr, monthName, fmtDate, ordinal, buildMessage, whatsappUrl, mailUrl, subjectFor, waNumber } from '../reminders'
 import { Sheet, Avatar, Chip, Field, PhotoPick, DocPick, Lightbox, Segmented, useToast, listParent, listItem } from '../ui'
@@ -15,8 +15,11 @@ export const ID_TYPES = ['Aadhaar', 'PAN', 'Passport', 'Driving licence', 'Voter
 export async function openDoc(doc, setLightbox) {
   if (!doc) return
   if (doc.type?.startsWith('image/')) return setLightbox({ src: doc.data, type: doc.type })
-  const blob = await (await fetch(doc.data)).blob()
-  window.open(URL.createObjectURL(blob), '_blank')
+  // Always re-label the bytes as a PDF so the browser shows its PDF viewer and never runs it as a page.
+  const bytes = await (await fetch(doc.data)).arrayBuffer()
+  const url = URL.createObjectURL(new Blob([bytes], { type: 'application/pdf' }))
+  window.open(url, '_blank', 'noopener')
+  setTimeout(() => URL.revokeObjectURL(url), 60000)
 }
 
 /* ---------------- resident detail ---------------- */
@@ -26,10 +29,12 @@ export function TenantSheet({ id, onClose }) {
   const [lightbox, setLightbox] = useState(null)
   const [editing, setEditing] = useState(false)
   const t = tenants.find((x) => x.id === id)
-  const [keep, setKeep] = useState(t)
-  useEffect(() => { if (t) setKeep(t) }, [t])
-  const tt = t || keep
-  const s = tt && states[tt.id]
+  const live = t && states[t.id]
+  // Remember the last resident + rent state so the sheet can animate closed even after they're deleted.
+  const [keep, setKeep] = useState(null)
+  useEffect(() => { if (t && live) setKeep({ t, s: live }) }, [t, live])
+  const tt = t || keep?.t
+  const s = live || keep?.s
   const h = tt && houseOf[tt.houseId]
 
   // Month-by-month history since move-in (latest first, last 12).
@@ -53,14 +58,35 @@ export function TenantSheet({ id, onClose }) {
   return (
     <>
       <Sheet open={!!t} onClose={onClose} title="Resident" size="lg"
-        footer={tt && tt.active && (
+        footer={tt && (tt.active ? (
           <>
             <button className="btn" onClick={() => setEditing(true)}><Pencil size={15} /> Edit details</button>
             <button className="btn ghost danger-text" onClick={() => {
               if (confirm(`Mark ${tt.name} as moved out? Their records stay in “Moved out”.`)) { moveOut(tt.id); onClose(); toast(`${tt.name} moved out`) }
             }}><LogOut size={15} /> Move out</button>
           </>
-        )}
+        ) : (
+          <>
+            <button className="btn" onClick={() => {
+              try {
+                updateTenant(tt.id, { active: true, movedOutOn: null })
+                toast(`${tt.name} moved back in`)
+              } catch (x) {
+                toast(x.message + ' Edit their details first.', { tone: 'danger' })
+              }
+            }}>Move back in</button>
+            <button className="btn ghost danger-text" onClick={async () => {
+              if (!confirm(`Permanently delete ${tt.name}? Their details, photo, ID document and payment history will be erased. This can’t be undone.`)) return
+              try {
+                await deleteTenant(tt.id)
+                onClose()
+                toast(`${tt.name}’s data was erased`)
+              } catch (x) {
+                toast(x.message, { tone: 'danger' })
+              }
+            }}><Trash2 size={15} /> Delete permanently</button>
+          </>
+        ))}
       >
         {tt && (
           <motion.div variants={listParent} initial="initial" animate="animate" className="tenant">

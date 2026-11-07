@@ -1,8 +1,9 @@
 import { createContext, useCallback, useContext, useEffect, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
 import { AnimatePresence, motion, useDragControls } from 'framer-motion'
 import { X, Camera, FileText, Upload, RefreshCw } from 'lucide-react'
 
-export const ease = [0.22, 1, 0.36, 1]
+export const ease = [0.28, 0.11, 0.32, 1] // Apple-style ease-out
 export const spring = { type: 'spring', stiffness: 380, damping: 34 }
 
 export const pageMotion = {
@@ -80,7 +81,7 @@ export function Sheet({ open, onClose, title, subtitle, children, footer, size =
 
   const from = desktop ? { x: '104%' } : { y: '100%' }
   const to = desktop ? { x: 0 } : { y: 0 }
-  return (
+  return createPortal(
     <AnimatePresence>
       {open && (
         <>
@@ -118,7 +119,8 @@ export function Sheet({ open, onClose, title, subtitle, children, footer, size =
           </motion.div>
         </>
       )}
-    </AnimatePresence>
+    </AnimatePresence>,
+    document.body,
   )
 }
 
@@ -200,11 +202,23 @@ function readAsDataURL(file) {
     r.readAsDataURL(file)
   })
 }
-/** Images are resized + compressed in the browser so they fit in storage; PDFs kept as-is. */
+const safeName = (n) => String(n || 'document').replace(/[^\w.\- ]+/g, '_').slice(0, 80)
+
+/**
+ * Only two kinds of upload are allowed:
+ *  • images: re-drawn on a canvas and saved as JPEG (this also strips hidden metadata such as GPS location)
+ *  • PDFs: checked by their real file signature ("%PDF-"), not just the name or reported type
+ * Anything else (web pages, scripts, Office files…) is refused.
+ */
 export async function fileToData(file, max = 1280, quality = 0.78) {
+  if (file.size > 8e6) throw new Error('That file is too large. Please use one under 8 MB.')
   if (!file.type.startsWith('image/')) {
-    if (file.size > 1.6e6) throw new Error('That PDF is over 1.5 MB. Please upload a photo of the ID instead.')
-    return { name: file.name, type: file.type, data: await readAsDataURL(file) }
+    const head = new Uint8Array(await file.slice(0, 5).arrayBuffer())
+    const isPdf = String.fromCharCode(...head) === '%PDF-'
+    if (!isPdf) throw new Error('Please upload a photo or a PDF.')
+    if (file.size > 4.5e6) throw new Error('That PDF is over 4.5 MB. Please upload a photo of the ID instead.')
+    const data = await readAsDataURL(new Blob([file], { type: 'application/pdf' }))
+    return { name: safeName(file.name), type: 'application/pdf', data }
   }
   const url = URL.createObjectURL(file)
   const img = await new Promise((res, rej) => {
@@ -219,7 +233,7 @@ export async function fileToData(file, max = 1280, quality = 0.78) {
   c.height = Math.round(img.height * s)
   c.getContext('2d').drawImage(img, 0, 0, c.width, c.height)
   URL.revokeObjectURL(url)
-  return { name: file.name.replace(/\.\w+$/, '.jpg'), type: 'image/jpeg', data: c.toDataURL('image/jpeg', quality) }
+  return { name: safeName(file.name).replace(/\.\w+$/, '') + '.jpg', type: 'image/jpeg', data: c.toDataURL('image/jpeg', quality) }
 }
 
 export function PhotoPick({ value, onChange, name }) {
@@ -309,7 +323,7 @@ export function DocPick({ value, onChange, label = 'ID proof' }) {
           </div>
         </>
       )}
-      <input ref={ref} type="file" accept="image/*,application/pdf" hidden onChange={(e) => { take(e.target.files[0]); e.target.value = '' }} />
+      <input ref={ref} type="file" accept="image/jpeg,image/png,image/webp,image/heic,application/pdf" hidden onChange={(e) => { take(e.target.files[0]); e.target.value = '' }} />
     </div>
   )
 }
@@ -330,22 +344,20 @@ export function Empty({ icon: Icon, title, children, action }) {
   )
 }
 
-export function Lightbox({ src, type, onClose }) {
-  return (
+/** Full-screen photo viewer. Images only: PDFs open in the browser's own PDF viewer (see openDoc). */
+export function Lightbox({ src, onClose }) {
+  return createPortal(
     <AnimatePresence>
       {src && (
         <motion.div className="lightbox" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} onClick={onClose}>
-          {type?.startsWith('image/') !== false ? (
-            <motion.img src={src} alt="" initial={{ scale: 0.92 }} animate={{ scale: 1 }} exit={{ scale: 0.95 }} transition={spring} />
-          ) : (
-            <iframe src={src} title="Document" onClick={(e) => e.stopPropagation()} />
-          )}
+          <motion.img src={src} alt="" initial={{ scale: 0.92 }} animate={{ scale: 1 }} exit={{ scale: 0.95 }} transition={spring} />
           <button className="icon-btn lb-close" aria-label="Close">
             <X size={20} />
           </button>
         </motion.div>
       )}
-    </AnimatePresence>
+    </AnimatePresence>,
+    document.body,
   )
 }
 
