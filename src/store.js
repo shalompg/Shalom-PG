@@ -392,29 +392,83 @@ const assertTenant = (t) => {
   if (e.length) throw new Error(e[0] + '.')
 }
 
-export function addTenant(ownerId, houseId, data) {
+/* ---------- residents who joined a while back ---------- */
+/** Billable months for a resident from move-in up to (and including) `upTo` ('YYYY-MM'). */
+export function billableMonths(t, upTo) {
+  if (!t?.joinedOn || !upTo) return []
+  const joined = new Date(t.joinedOn + 'T00:00:00')
+  const out = []
+  let p = periodOf(joined)
+  for (let guard = 0; p <= upTo && guard < 600; guard++) {
+    if (dueDateFor(t, p) >= joined) out.push(p)
+    p = nextPeriod(p)
+  }
+  return out
+}
+/** Payment rows that settle every unpaid month up to `upTo` ("paid before the app"). */
+function backfillRows(t, upTo) {
+  if (!upTo) return []
+  const paid = new Set(db.payments.filter((p) => p.tenantId === t.id).map((p) => p.period))
+  return billableMonths(t, upTo)
+    .filter((p) => !paid.has(p))
+    .map((period) => {
+      const due = dueDateFor(t, period)
+      return { id: uid(), tenantId: t.id, ownerId: t.ownerId, period, amount: monthlyDue(t), method: 'Paid earlier', paidOn: isoDay(due), at: due.getTime() }
+    })
+}
+const payTo = (p) => ({ id: p.id, tenant_id: p.tenantId, owner_id: p.ownerId, period: p.period, amount: p.amount, method: p.method, paid_on: p.paidOn })
+const isPeriod = (v) => typeof v === 'string' && /^\d{4}-(0[1-9]|1[0-2])$/.test(v)
+
+/** Mark every unpaid month up to `upTo` as paid, in one go. Returns the payments created (for undo). */
+export async function settleUpTo(tenantId, upTo) {
+  const t = db.tenants.find((x) => x.id === tenantId)
+  if (!t || !isPeriod(upTo)) return []
+  const rows = backfillRows(t, upTo)
+  if (!rows.length) return []
+  if (cloud) must(await sb.from('payments').upsert(rows.map(payTo), { onConflict: 'tenant_id,period' }))
+  patchCol('payments', (a) => [...a, ...rows])
+  return rows
+}
+
+/** Add one resident. `paidUpTo` ('YYYY-MM', optional) marks earlier months as already paid. */
+export function addTenant(ownerId, houseId, data, paidUpTo) {
   const t = clean({ ...blankTenant, ...data, id: uid(), ownerId, houseId, status: 'approved', active: true, createdAt: Date.now() })
+  delete t.paidUpTo
   assertTenant(t)
-  patchCol('tenants', (a) => [...a, t])
+  const pays = isPeriod(paidUpTo) ? backfillRows(t, paidUpTo) : []
+  commit({ ...db, tenants: [...db.tenants, t], payments: [...db.payments, ...pays] })
   remote(async () => {
     const withFiles = await uploadFiles(ownerId, t.id, t)
-    return sb.from('tenants').insert({ id: t.id, owner_id: ownerId, ...tenantTo(withFiles) })
+    const res = await sb.from('tenants').insert({ id: t.id, owner_id: ownerId, ...tenantTo(withFiles) })
+    if (res.error || !pays.length) return res
+    return sb.from('payments').insert(pays.map(payTo))
   })
   return t
 }
 
 /**
- * Add many residents to one house at once (Excel import). Rows must already be checked.
+ * Add many residents at once (Excel import). Each row may name its own house (row.houseId);
+ * otherwise `houseId` is used. Rows may carry `paidUpTo` ('YYYY-MM'). Rows must already be checked.
  * Returns the created residents so the import can be undone.
  */
 export async function addTenants(ownerId, houseId, rows) {
-  const list = rows.map((data) => clean({ ...blankTenant, ...data, id: uid(), ownerId, houseId, status: 'approved', active: true, createdAt: Date.now() }))
-  list.forEach(assertTenant)
-  if (cloud) {
-    // One request, all-or-nothing: either every row is saved or none are.
-    must(await sb.from('tenants').insert(list.map((t) => ({ id: t.id, owner_id: ownerId, ...tenantTo(t) }))))
+  const mine = new Set(db.houses.filter((h) => h.ownerId === ownerId).map((h) => h.id))
+  const list = []
+  const pays = []
+  for (const { paidUpTo, ...data } of rows) {
+    const hid = data.houseId || houseId
+    if (!mine.has(hid)) throw new Error(`Choose a house for ${data.name || 'every row'}.`)
+    const t = clean({ ...blankTenant, ...data, id: uid(), ownerId, houseId: hid, status: 'approved', active: true, createdAt: Date.now() })
+    assertTenant(t)
+    list.push(t)
+    if (isPeriod(paidUpTo)) pays.push(...backfillRows(t, paidUpTo))
   }
-  patchCol('tenants', (a) => [...a, ...list])
+  if (cloud) {
+    // All-or-nothing for the residents; their earlier payments follow in one more request.
+    must(await sb.from('tenants').insert(list.map((t) => ({ id: t.id, owner_id: ownerId, ...tenantTo(t) }))))
+    if (pays.length) must(await sb.from('payments').insert(pays.map(payTo)))
+  }
+  commit({ ...db, tenants: [...db.tenants, ...list], payments: [...db.payments, ...pays] })
   return list
 }
 
@@ -501,7 +555,7 @@ export function dueDateFor(t, period) {
   const dim = new Date(y, m, 0).getDate()
   return new Date(y, m - 1, Math.min(t.dueDay, dim))
 }
-const nextPeriod = (p) => {
+export const nextPeriod = (p) => {
   let [y, m] = p.split('-').map(Number)
   m++
   if (m > 12) { m = 1; y++ }

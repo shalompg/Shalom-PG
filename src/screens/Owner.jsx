@@ -13,6 +13,7 @@ import { go } from '../router'
 import { Logo, APP_NAME } from './Auth'
 import { Houses, HouseDetail } from './Houses'
 import { TenantSheet, ReminderSheet, BulkRemindSheet, PaySheet, TenantFormSheet } from './TenantSheet'
+import { ImportButton } from './Import'
 
 const Ctx = createContext(null)
 export const useOwner = () => useContext(Ctx)
@@ -396,6 +397,7 @@ const FILTERS = [
   ['all', 'All'],
   ['attention', 'Needs attention'],
   ['paid', 'Paid'],
+  ['docs', 'Missing photo/ID'],
   ['left', 'Moved out'],
 ]
 function People() {
@@ -409,6 +411,7 @@ function People() {
       const st = states[t.id].status
       if (f === 'attention') return ['overdue', 'today', 'soon'].includes(st)
       if (f === 'paid') return st === 'paid'
+      if (f === 'docs') return !(t.photoPath || t.photo) || !(t.idDocPath || t.idDoc)
       return true
     })
     .filter((t) => house === 'all' || t.houseId === house)
@@ -426,11 +429,17 @@ function People() {
           <h1 className="display">Residents</h1>
         </div>
         {houses.length > 0 && (
-          <button className="btn primary" onClick={addResident}>
-            <UserPlus size={18} /> <span className="hide-sm">Add resident</span>
-          </button>
+          <div className="btn-row">
+            <ImportButton className="btn" />
+            <button className="btn primary" onClick={addResident}>
+              <UserPlus size={18} /> <span className="hide-sm">Add resident</span>
+            </button>
+          </div>
         )}
       </header>
+      {f === 'docs' && list.length > 0 && (
+        <p className="hint-box">{list.length} resident{list.length === 1 ? ' is' : 's are'} missing a photo or ID proof. Open each one → Edit details → add them, e.g. by taking a photo of their ID.</p>
+      )}
       <div className="toolbar">
         <label className="search">
           <Search size={17} />

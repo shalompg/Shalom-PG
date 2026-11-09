@@ -48,9 +48,12 @@ export function Houses() {
           <p className="eyebrow">Your properties</p>
           <h1 className="display">Houses</h1>
         </div>
-        <button className="btn primary" onClick={() => setAdding(true)}>
-          <Plus size={18} /> <span className="hide-sm">Add house</span>
-        </button>
+        <div className="btn-row">
+          {houses.length > 0 && <ImportButton className="btn" />}
+          <button className="btn primary" onClick={() => setAdding(true)}>
+            <Plus size={18} /> <span className="hide-sm">Add house</span>
+          </button>
+        </div>
       </header>
 
       {houses.length === 0 ? (

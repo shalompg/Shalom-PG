@@ -1,10 +1,10 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { motion } from 'framer-motion'
 import {
   Phone, MessageCircle, Mail, Bell, Check, FileText, Pencil, LogOut, ShieldCheck, Copy, Undo2, X, Send, Wallet, Trash2,
 } from 'lucide-react'
 import {
-  addTenant, updateTenant, deleteTenant, moveOut, markPaid, undoPayment, logReminder, periodOf, today, isoDay, monthlyDue,
+  addTenant, updateTenant, deleteTenant, moveOut, markPaid, undoPayment, logReminder, periodOf, today, isoDay, monthlyDue, billableMonths, settleUpTo,
 } from '../store'
 import { inr, monthName, fmtDate, ordinal, buildMessage, whatsappUrl, mailUrl, subjectFor, waNumber } from '../reminders'
 import { Sheet, Avatar, Chip, Field, PhotoPick, DocPick, Lightbox, Segmented, useToast, listParent, listItem } from '../ui'
@@ -162,6 +162,7 @@ export function TenantSheet({ id, onClose }) {
             {history.length > 0 && (
               <motion.div variants={listItem}>
                 <h4 className="sub-head">Payment history</h4>
+                {s?.unpaid?.length > 1 && <CatchUp t={tt} unpaid={s.unpaid} />}
                 <div className="history">
                   {history.slice(0, 12).map(({ period, pay, late }) => (
                     <div key={period} className={'hist ' + (pay ? 'paid' : late ? 'late' : 'open')}>
@@ -189,6 +190,49 @@ export function TenantSheet({ id, onClose }) {
   )
 }
 
+/** For people who joined a while back: settle many unpaid months in one step. */
+function CatchUp({ t, unpaid }) {
+  const toast = useToast()
+  const [upTo, setUpTo] = useState(unpaid[unpaid.length - 2] || unpaid[0])
+  const [busy, setBusy] = useState(false)
+  useEffect(() => { if (!unpaid.includes(upTo)) setUpTo(unpaid[unpaid.length - 2] || unpaid[0]) }, [unpaid.join()]) // eslint-disable-line react-hooks/exhaustive-deps
+  const count = unpaid.filter((p) => p <= upTo).length
+  return (
+    <div className="catch-up">
+      <p><strong>{unpaid.length} months show as unpaid.</strong> If they were paid before you started using the app, mark them in one go:</p>
+      <div className="catch-up-row">
+        <label className="field">
+          <span className="field-label">Paid up to and including</span>
+          <select value={upTo} onChange={(e) => setUpTo(e.target.value)}>
+            {[...unpaid].reverse().map((p) => <option key={p} value={p}>{monthName(p)}</option>)}
+          </select>
+        </label>
+        <button
+          className="btn primary"
+          disabled={busy}
+          onClick={async () => {
+            setBusy(true)
+            try {
+              const made = await settleUpTo(t.id, upTo)
+              toast(`${made.length} month${made.length === 1 ? '' : 's'} marked as paid earlier`, {
+                tone: 'ok',
+                ms: 8000,
+                action: { label: 'Undo', run: () => made.forEach((p) => undoPayment(p.id)) },
+              })
+            } catch (x) {
+              toast(x.message, { tone: 'danger' })
+            } finally {
+              setBusy(false)
+            }
+          }}
+        >
+          <Check size={15} /> Mark {count} month{count === 1 ? '' : 's'} paid
+        </button>
+      </div>
+    </div>
+  )
+}
+
 function Info({ label, value, wide }) {
   return (
     <div className={'info' + (wide ? ' wide' : '')}>
@@ -202,34 +246,57 @@ function Info({ label, value, wide }) {
 export function TenantFormSheet({ open, onClose, tenant, houseId }) {
   const { owner, houses } = useOwner()
   const toast = useToast()
-  const blank = { name: '', phone: '', email: '', room: '', rent: '', deposit: '', maintenance: '', maintenanceMonthly: false, dueDay: 5, joinedOn: isoDay(new Date()), occupation: '', emergencyName: '', emergencyPhone: '', idType: 'Aadhaar', channel: 'whatsapp', notes: '', photo: '', idDoc: null, houseId }
+  const nameRef = useRef()
+  const blank = { name: '', phone: '', email: '', room: '', rent: '', deposit: '', maintenance: '', maintenanceMonthly: false, dueDay: 5, joinedOn: isoDay(new Date()), occupation: '', emergencyName: '', emergencyPhone: '', idType: 'Aadhaar', channel: 'whatsapp', notes: '', photo: '', idDoc: null, houseId, paidUpTo: '' }
   const [f, setF] = useState(blank)
-  useEffect(() => { if (open) setF(tenant ? { ...blank, ...tenant } : blank) }, [open]) // eslint-disable-line react-hooks/exhaustive-deps
+  const [added, setAdded] = useState(0)
+  useEffect(() => {
+    if (!open) return
+    setF(tenant ? { ...blank, ...tenant } : blank)
+    setAdded(0)
+  }, [open]) // eslint-disable-line react-hooks/exhaustive-deps
   const set = (k) => (e) => setF((x) => ({ ...x, [k]: e?.target ? e.target.value : e }))
+
+  // Months this person could already have paid for (move-in month → this month).
+  const months = !tenant && /^\d{4}-\d{2}-\d{2}$/.test(f.joinedOn || '')
+    ? billableMonths({ joinedOn: f.joinedOn, dueDay: Number(f.dueDay) || 1 }, periodOf(today()))
+    : []
+  useEffect(() => {
+    if (f.paidUpTo && !months.includes(f.paidUpTo)) setF((x) => ({ ...x, paidUpTo: '' }))
+  }, [f.joinedOn, f.dueDay]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const submit = (e) => {
     e.preventDefault()
+    const again = e.nativeEvent.submitter?.value === 'again'
     try {
       if (tenant) {
         const { id, ...rest } = f // eslint-disable-line no-unused-vars
         updateTenant(tenant.id, rest)
         toast('Details saved', { tone: 'ok' })
-      } else {
-        addTenant(owner.id, f.houseId, f)
-        toast(`${f.name} added`, { tone: 'ok' })
+        return onClose()
       }
-      onClose()
+      const { paidUpTo, ...data } = f
+      addTenant(owner.id, f.houseId, data, paidUpTo)
+      toast(`${f.name} added${paidUpTo ? ` · paid up to ${monthName(paidUpTo, true)}` : ''}`, { tone: 'ok' })
+      if (!again) return onClose()
+      // Keep the stay details (same house, rent, deposit, due day…) and clear the person.
+      setF((x) => ({
+        ...x, name: '', phone: '', email: '', occupation: '', room: '', photo: '', idDoc: null,
+        emergencyName: '', emergencyPhone: '', notes: '',
+      }))
+      setAdded((n) => n + 1)
+      setTimeout(() => nameRef.current?.focus(), 50)
     } catch (x) {
       toast(x.message, { tone: 'danger' })
     }
   }
 
   return (
-    <Sheet open={open} onClose={onClose} title={tenant ? 'Edit resident' : 'Add a resident'} subtitle={tenant ? tenant.name : 'Fields marked * are required.'} size="lg">
+    <Sheet open={open} onClose={onClose} title={tenant ? 'Edit resident' : 'Add a resident'} subtitle={tenant ? tenant.name : added ? `${added} added so far · same house, rent and due day kept` : 'Fields marked * are required.'} size="lg">
       <form className="stack" onSubmit={submit}>
         <PhotoPick value={f.photo} onChange={set('photo')} name={f.name} />
         <div className="grid-2">
-          <Field label="Full name *" value={f.name} onChange={set('name')} required />
+          <Field label="Full name *" value={f.name} onChange={set('name')} required ref={nameRef} />
           <Field label="Mobile *" type="tel" value={f.phone} onChange={set('phone')} required placeholder="98765 43210" />
           <Field label="Email (optional)" type="email" value={f.email} onChange={set('email')} placeholder="For email reminders" />
           <Field label="Occupation" value={f.occupation} onChange={set('occupation')} placeholder="Student, engineer…" />
@@ -257,6 +324,18 @@ export function TenantFormSheet({ open, onClose, tenant, houseId }) {
         {f.maintenanceMonthly && Number(f.maintenance) > 0 && (
           <p className="hint-box">Each month’s total due: {inr((Number(f.rent) || 0) + (Number(f.maintenance) || 0))} (rent + maintenance)</p>
         )}
+        {!tenant && months.length > 0 && (
+          <div className="paid-upto">
+            <Field label="Rent already paid up to" hint={f.paidUpTo
+              ? `${billableMonths({ joinedOn: f.joinedOn, dueDay: Number(f.dueDay) || 1 }, f.paidUpTo).length} month(s) will be marked “paid earlier”. Anything after that shows as due.`
+              : 'For someone who joined a while back: pick the last month they’ve already paid for.'}>
+              <select value={f.paidUpTo} onChange={set('paidUpTo')}>
+                <option value="">Nothing paid yet</option>
+                {[...months].reverse().map((p) => <option key={p} value={p}>{monthName(p)}</option>)}
+              </select>
+            </Field>
+          </div>
+        )}
         <h4 className="sub-head">ID & safety</h4>
         <div className="grid-2">
           <Field label="ID type">
@@ -278,7 +357,14 @@ export function TenantFormSheet({ open, onClose, tenant, houseId }) {
         <Field label="Notes (only you see these)">
           <textarea rows={2} value={f.notes} onChange={set('notes')} />
         </Field>
-        <button className="btn primary lg">{tenant ? 'Save changes' : 'Add resident'}</button>
+        {tenant ? (
+          <button className="btn primary lg">Save changes</button>
+        ) : (
+          <div className="form-actions">
+            <button className="btn lg" name="action" value="again">Save &amp; add another</button>
+            <button className="btn primary lg" name="action" value="done">Add resident</button>
+          </div>
+        )}
       </form>
     </Sheet>
   )
