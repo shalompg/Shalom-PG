@@ -95,17 +95,12 @@ function createFormFor_(cfg) {
     .setHelpText('The date you moved in (or will move in)')
     .setRequired(true);
 
-  form.addTextItem()
-    .setTitle('Room')
-    .setHelpText('Optional, if you know your room / bed number')
-    .setRequired(false);
-
   // ---- Safety ----
   form.addSectionHeaderItem().setTitle('ID & emergency contact');
 
   form.addListItem()
     .setTitle('ID type')
-    .setHelpText('Which ID will you show the owner? (Please do not type your ID number here.)')
+    .setHelpText('Which ID card are you uploading below? (Please do not type your ID number.)')
     .setChoiceValues(ID_TYPES)
     .setRequired(false);
 
@@ -167,5 +162,6 @@ function createFormFor_(cfg) {
   ss.getSheets().filter((s) => s.getSheetId() !== sheet.getSheetId() && s.getLastRow() === 0).forEach((s) => ss.deleteSheet(s));
 
   const formLink = form.shortenFormUrl(form.getPublishedUrl());
-  return `${cfg.owner}\n  Form to send residents: ${formLink}\n  Responses sheet (keep private): ${ss.getUrl()}`;
+  return `${cfg.owner}\n  Form to send residents: ${formLink}\n  Responses sheet (keep private): ${ss.getUrl()}` +
+    `\n  Edit the form (add the "ID card" file-upload question here): ${form.getEditUrl()}`;
 }
