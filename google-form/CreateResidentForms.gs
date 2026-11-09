@@ -1,7 +1,7 @@
 /**
  * Shalom PG – resident details Google Forms
  *
- * Creates ONE Google Form per PG owner, each with its own response spreadsheet.
+ * Creates ONE Google Form for the PG owner below, with its own response spreadsheet.
  * Residents fill in their own basic details; the money fields (rent, deposit,
  * maintenance, due day, paid up to) are NOT on the form — they are extra columns
  * in the response sheet that only the owner fills in.
@@ -10,20 +10,15 @@
  * Shalom PG: Residents → Import from Excel. The column names already match the app.
  *
  * How to run: script.google.com → New project → paste this file → select
- * `createAllForms` → Run → allow access → open View → Logs (or Execution log) for the links.
+ * `createForm` → Run → allow access → open View → Logs (or Execution log) for the links.
  */
 
-// Owners and their houses, exactly as named in the app (the house names must match for the import).
-const OWNERS = [
-  {
-    owner: 'Karunakar',
-    houses: ['Francis Court', 'Kodikal', 'Kottara', 'Ladies', 'Mahima', 'Safal', 'Shiva'],
-  },
-  {
-    owner: 'Blossom',
-    houses: ['Anugraha', 'Green House', 'Nandana', 'Pais Mansion', 'Pereira L PG', 'Pink House', 'Shishira', 'Whitehouse'],
-  },
-];
+// The owner and their houses, exactly as named in the app (the house names must match for the import).
+// For Karunakar instead, use: houses: ['Francis Court', 'Kodikal', 'Kottara', 'Ladies', 'Mahima', 'Safal', 'Shiva']
+const OWNER = {
+  owner: 'Blossom',
+  houses: ['Anugraha', 'Green House', 'Nandana', 'Pais Mansion', 'Pereira L PG', 'Pink House', 'Shishira', 'Whitehouse'],
+};
 
 // Same lists the app uses.
 const ID_TYPES = ['Aadhaar', 'PAN', 'Passport', 'Driving licence', 'Voter ID', 'College / office ID', 'Other'];
@@ -35,9 +30,8 @@ const OWNER_COLUMNS = ['Monthly rent', 'Deposit', 'Maintenance', 'Maintenance ty
 // Indian mobile: 10 digits starting 6–9; allows +91 / 0 prefix and a space or dash in the middle.
 const MOBILE_PATTERN = '^(\\+?91[ -]?|0)?[6-9][0-9]{4}[ -]?[0-9]{5}$';
 
-function createAllForms() {
-  const links = OWNERS.map(createFormFor_);
-  Logger.log('\n' + links.join('\n\n'));
+function createForm() {
+  Logger.log('\n' + createFormFor_(OWNER))
 }
 
 function createFormFor_(cfg) {
