@@ -295,3 +295,12 @@ alter table public.tenants
   add constraint tenants_rent_max check (rent <= 10000000 and deposit <= 100000000);
 alter table public.houses add constraint houses_name_len check (char_length(name) between 1 and 120);
 alter table public.owners add constraint owners_pay_link_https check (pay_link is null or pay_link = '' or pay_link ~* '^https://');
+
+-- ---------- due day 1–30, optional email, maintenance (applied 2026-11-09) ----------
+alter table public.tenants drop constraint tenants_due_day_check;
+alter table public.tenants add constraint tenants_due_day_check check (due_day between 1 and 30);
+alter table public.tenants alter column email set default '';
+alter table public.tenants
+  add column maintenance int not null default 0,
+  add column maintenance_monthly boolean not null default false,
+  add constraint tenants_maintenance_range check (maintenance between 0 and 10000000);

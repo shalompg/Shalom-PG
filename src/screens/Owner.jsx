@@ -5,7 +5,7 @@ import {
   MessageCircle, Mail, ShieldCheck, PartyPopper, UserPlus, BellRing, CalendarDays, KeyRound,
 } from 'lucide-react'
 import {
-  useDB, useSession, signOut, updateOwner, rentState, periodOf, today, exportOwner, importOwner, changeOwnerPassword, cloud,
+  useDB, useSession, signOut, updateOwner, rentState, periodOf, today, exportOwner, importOwner, monthlyDue, changeOwnerPassword, cloud,
 } from '../store'
 import { inr, monthName, fmtDate, DEFAULT_TEMPLATE, buildMessage } from '../reminders'
 import { Avatar, Chip, Field, Empty, AnimatedNumber, pageMotion, listParent, listItem, useToast, spring, ease } from '../ui'
@@ -188,7 +188,7 @@ export function RentRow({ t, showHouse = true }) {
       <div className="row-side">
         {t.active && (
           <>
-            <span className="row-amt">{inr(needs ? s.amount : t.rent)}</span>
+            <span className="row-amt">{inr(needs ? s.amount : monthlyDue(t))}</span>
             {needs ? (
               <div className="row-actions">
                 <button className="icon-btn soft" title="Send reminder" aria-label="Send reminder" onClick={(e) => { e.stopPropagation(); remind(t.id) }}>
@@ -230,7 +230,7 @@ function Today() {
   const cur = periodOf(today())
   const live = tenants.filter((t) => t.active)
   const billable = live.filter((t) => states[t.id].status !== 'scheduled' || states[t.id].period === cur)
-  const expected = billable.reduce((a, t) => a + t.rent, 0)
+  const expected = billable.reduce((a, t) => a + monthlyDue(t), 0)
   const collected = payments.filter((p) => p.period === cur).reduce((a, p) => a + p.amount, 0)
   const by = (st) => live.filter((t) => states[t.id].status === st)
   const overdue = by('overdue').sort((a, b) => states[a.id].days - states[b.id].days)
@@ -278,7 +278,7 @@ function Today() {
         <motion.div variants={listItem} className="stat tone-warn">
           <p className="stat-label">Due today</p>
           <p className="stat-big"><AnimatedNumber value={dueToday.length} /></p>
-          <p className="stat-sub">{dueToday.length ? inr(dueToday.reduce((a, t) => a + t.rent, 0)) : 'Nothing today'}</p>
+          <p className="stat-sub">{dueToday.length ? inr(dueToday.reduce((a, t) => a + monthlyDue(t), 0)) : 'Nothing today'}</p>
         </motion.div>
         <motion.div variants={listItem} className="stat">
           <p className="stat-label">Residents</p>

@@ -17,7 +17,9 @@ const COLUMNS = {
   email: ['email', 'emailid', 'emailaddress', 'mail'],
   room: ['room', 'roomno', 'roomnumber', 'bed', 'roombed'],
   rent: ['rent', 'monthlyrent', 'rentpermonth', 'rentamount'],
-  deposit: ['deposit', 'securitydeposit', 'advance'],
+  deposit: ['deposit', 'securitydeposit', 'advance', 'refundabledeposit'],
+  maintenance: ['maintenance', 'maintenancecharge', 'maintenancecharges', 'maintenanceamount', 'maintenancefee'],
+  maintenanceType: ['maintenancetype', 'maintenancefrequency', 'maintenancecharged', 'maintenanceis'],
   dueDay: ['dueday', 'duedate', 'rentdueday', 'rentdue', 'due'],
   joinedOn: ['movedin', 'moveindate', 'joinedon', 'joiningdate', 'joindate', 'checkin', 'startdate'],
   occupation: ['occupation', 'work', 'job', 'college', 'company'],
@@ -28,7 +30,7 @@ const COLUMNS = {
   notes: ['notes', 'remarks', 'comments'],
 }
 const TEMPLATE_HEADERS = [
-  'Name', 'Mobile', 'Email', 'Room', 'Monthly rent', 'Deposit', 'Due day', 'Moved in',
+  'Name', 'Mobile', 'Email', 'Room', 'Monthly rent', 'Deposit', 'Maintenance', 'Maintenance type', 'Due day', 'Moved in',
   'Occupation', 'Emergency contact', 'Emergency phone', 'ID type', 'Reminders', 'Notes',
 ]
 const key = (h) => String(h).toLowerCase().replace(/[^a-z]/g, '')
@@ -88,6 +90,8 @@ function parseRows(json, XLSX, existingPhones) {
         room: String(r.room ?? '').trim(),
         rent: toNumber(r.rent),
         deposit: r.deposit === '' || r.deposit == null ? NaN : toNumber(r.deposit),
+        maintenance: r.maintenance === '' || r.maintenance == null ? 0 : toNumber(r.maintenance),
+        maintenanceMonthly: /month/i.test(String(r.maintenanceType ?? '')),
         dueDay: toDueDay(r.dueDay ?? '', XLSX),
         joinedOn: toDate(r.joinedOn, XLSX),
         occupation: String(r.occupation ?? '').trim(),
@@ -113,15 +117,15 @@ async function downloadTemplate() {
   const wb = XLSX.utils.book_new()
   const ws = XLSX.utils.aoa_to_sheet([
     TEMPLATE_HEADERS,
-    ['Ananya Rao', '9876543210', 'ananya@gmail.com', '101', 9500, 19000, 5, '01/10/2026', 'Software engineer', 'Ravi Rao', '9812345678', 'Aadhaar', 'WhatsApp', ''],
+    ['Ananya Rao', '9876543210', 'ananya@gmail.com', '101', 9500, 19000, 500, 'Monthly', 5, '01/10/2026', 'Software engineer', 'Ravi Rao', '9812345678', 'Aadhaar', 'WhatsApp', ''],
   ])
   ws['!cols'] = TEMPLATE_HEADERS.map((h) => ({ wch: Math.max(12, h.length + 2) }))
   XLSX.utils.book_append_sheet(wb, ws, 'Residents')
   const help = XLSX.utils.aoa_to_sheet([
     ['How to fill the Residents sheet'],
     [''],
-    ['Required', 'Name, Mobile (10 digits), Email, Monthly rent, Deposit, Due day (1–28)'],
-    ['Optional', 'Room, Moved in (DD/MM/YYYY, today if empty), Occupation, Emergency contact + phone, ID type, Reminders (WhatsApp / Email / Both), Notes'],
+    ['Required', 'Name, Mobile (10 digits), Monthly rent, Deposit (0 if none), Due day (1–30)'],
+    ['Optional', 'Email, Room, Maintenance amount, Maintenance type (One-time or Monthly; one-time if empty), Moved in (DD/MM/YYYY, today if empty), Occupation, Emergency contact + phone, ID type, Reminders (WhatsApp / Email / Both), Notes'],
     ['Tip', 'One person per row. Delete the example row before adding your residents.'],
     ['Photos & ID', 'Add each person’s photo and ID proof in the app after importing.'],
   ])
@@ -217,7 +221,7 @@ export function ImportSheet({ open, onClose, houseId }) {
                 <span>1</span>
                 <div>
                   <strong>Get the template</strong>
-                  <p>One row per person. Required: name, mobile, email, rent, deposit and due day. Your own sheet works too if the column names are similar.</p>
+                  <p>One row per person. Required: name, mobile, rent, deposit and due day (1–30). Email and maintenance are optional. Your own sheet works too if the column names are similar.</p>
                   <button type="button" className="btn sm" onClick={downloadTemplate}><Download size={15} /> Download template</button>
                 </div>
               </li>

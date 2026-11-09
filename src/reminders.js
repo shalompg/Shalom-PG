@@ -64,7 +64,7 @@ export function buildMessage({ owner, house, tenant, state }) {
     first: tenant.name.split(' ')[0],
     house: house?.name || 'your PG',
     room: tenant.room || '',
-    amount: inr(state.amount || tenant.rent),
+    amount: inr(state.amount || (tenant.rent || 0) + (tenant.maintenanceMonthly ? tenant.maintenance || 0 : 0)),
     month: months,
     when: whenText(state),
     pay: payText(owner),

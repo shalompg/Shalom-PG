@@ -149,6 +149,7 @@ const houseTo = (h) => ({ id: h.id, owner_id: h.ownerId, name: h.name, address: 
 const tenantFrom = (r) => ({
   id: r.id, ownerId: r.owner_id, houseId: r.house_id, name: r.name, phone: r.phone, email: r.email || '',
   occupation: r.occupation || '', room: r.room || '', rent: r.rent ?? 0, deposit: r.deposit ?? 0, dueDay: r.due_day ?? 5,
+  maintenance: r.maintenance ?? 0, maintenanceMonthly: !!r.maintenance_monthly,
   joinedOn: r.joined_on, photoPath: r.photo_path || '', photo: '', idType: r.id_type || 'Aadhaar',
   idDocPath: r.id_doc_path || '', idDoc: r.id_doc_path ? { name: r.id_doc_name || 'ID proof', type: r.id_doc_type || 'image/jpeg', data: '' } : null,
   emergencyName: r.emergency_name || '', emergencyPhone: r.emergency_phone || '', channel: r.channel || 'whatsapp',
@@ -156,7 +157,7 @@ const tenantFrom = (r) => ({
 })
 const TENANT_COLS = {
   houseId: 'house_id', name: 'name', phone: 'phone', email: 'email', occupation: 'occupation', room: 'room', rent: 'rent',
-  deposit: 'deposit', dueDay: 'due_day', joinedOn: 'joined_on', idType: 'id_type', emergencyName: 'emergency_name',
+  deposit: 'deposit', dueDay: 'due_day', maintenance: 'maintenance', maintenanceMonthly: 'maintenance_monthly', joinedOn: 'joined_on', idType: 'id_type', emergencyName: 'emergency_name',
   emergencyPhone: 'emergency_phone', channel: 'channel', notes: 'notes', status: 'status', active: 'active', movedOutOn: 'moved_out_on',
   photoPath: 'photo_path', idDocPath: 'id_doc_path',
 }
@@ -346,7 +347,7 @@ export function deleteHouse(id) {
 
 /* ---------- tenants ---------- */
 const blankTenant = {
-  name: '', phone: '', email: '', occupation: '', room: '', rent: 0, deposit: 0, dueDay: 5,
+  name: '', phone: '', email: '', occupation: '', room: '', rent: 0, deposit: 0, dueDay: 5, maintenance: 0, maintenanceMonthly: false,
   joinedOn: isoDay(new Date()), photo: '', idType: 'Aadhaar', idDoc: null,
   emergencyName: '', emergencyPhone: '', channel: 'whatsapp', notes: '',
 }
@@ -365,7 +366,9 @@ const clean = (t) => {
   for (const [k, max] of Object.entries(TEXT_FIELDS)) if (k in t) t[k] = text(t[k], max)
   if ('rent' in t) t.rent = Math.round(Number(t.rent) || 0)
   if ('deposit' in t) t.deposit = Math.round(Number(t.deposit) || 0)
-  if ('dueDay' in t) t.dueDay = Math.min(28, Math.max(1, Math.round(Number(t.dueDay)) || 1))
+  if ('dueDay' in t) t.dueDay = Math.min(30, Math.max(1, Math.round(Number(t.dueDay)) || 1))
+  if ('maintenance' in t) t.maintenance = Math.round(Number(t.maintenance) || 0)
+  if ('maintenanceMonthly' in t) t.maintenanceMonthly = t.maintenanceMonthly === true || t.maintenanceMonthly === 'true'
   if ('email' in t) t.email = normEmail(t.email)
   if ('phone' in t) t.phone = normPhone(t.phone) || text(t.phone, 20)
   if ('emergencyPhone' in t) t.emergencyPhone = normPhone(t.emergencyPhone) || text(t.emergencyPhone, 20)
@@ -376,10 +379,11 @@ export function checkTenant(t) {
   const errs = []
   if (!t.name) errs.push('Name is missing')
   if (!normPhone(t.phone)) errs.push('Mobile must be a 10-digit Indian number')
-  if (!EMAIL_RE.test(t.email || '')) errs.push('Email is missing or invalid')
+  if (t.email && !EMAIL_RE.test(t.email)) errs.push('Email doesn’t look right')
   if (!(t.rent > 0) || t.rent > 10000000) errs.push('Monthly rent is missing')
   if (!(t.deposit >= 0) || t.deposit > 100000000) errs.push('Deposit is missing')
-  if (!(t.dueDay >= 1 && t.dueDay <= 28)) errs.push('Due day must be 1–28')
+  if (!(t.dueDay >= 1 && t.dueDay <= 30)) errs.push('Due day must be 1–30')
+  if (!(t.maintenance >= 0) || t.maintenance > 10000000) errs.push('Maintenance must be 0 or more')
   if (!/^\d{4}-\d{2}-\d{2}$/.test(t.joinedOn || '') || isNaN(new Date(t.joinedOn))) errs.push('Move-in date is invalid')
   return errs
 }
@@ -484,6 +488,8 @@ export function logReminder(tenantId, period, channel) {
 }
 
 /* ---------- rent engine ---------- */
+/** What a resident pays each month: rent, plus maintenance if it's charged monthly. */
+export const monthlyDue = (t) => (t.rent || 0) + (t.maintenanceMonthly ? t.maintenance || 0 : 0)
 export const today = () => {
   const d = new Date()
   d.setHours(0, 0, 0, 0)
@@ -557,7 +563,7 @@ export function rentState(t, payments, remindDays = 3) {
     // The months a payment made right now would cover.
     payFor: unpaid.length ? unpaid : [period],
     months,
-    amount: months * (t.rent || 0),
+    amount: months * monthlyDue(t),
     lastPayment: [...mine].sort((a, b) => b.at - a.at)[0],
   }
 }

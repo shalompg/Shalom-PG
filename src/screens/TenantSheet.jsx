@@ -4,7 +4,7 @@ import {
   Phone, MessageCircle, Mail, Bell, Check, FileText, Pencil, LogOut, ShieldCheck, Copy, Undo2, X, Send, Wallet, Trash2,
 } from 'lucide-react'
 import {
-  addTenant, updateTenant, deleteTenant, moveOut, markPaid, undoPayment, logReminder, periodOf, today, isoDay,
+  addTenant, updateTenant, deleteTenant, moveOut, markPaid, undoPayment, logReminder, periodOf, today, isoDay, monthlyDue,
 } from '../store'
 import { inr, monthName, fmtDate, ordinal, buildMessage, whatsappUrl, mailUrl, subjectFor, waNumber } from '../reminders'
 import { Sheet, Avatar, Chip, Field, PhotoPick, DocPick, Lightbox, Segmented, useToast, listParent, listItem } from '../ui'
@@ -112,7 +112,7 @@ export function TenantSheet({ id, onClose }) {
               <motion.div variants={listItem} className={'rent-card ' + s.status}>
                 <div>
                   <p className="stat-label">{needs ? (s.status === 'overdue' ? 'Overdue' : 'Due') : 'Rent'}</p>
-                  <p className="rent-amt">{inr(needs ? s.amount : tt.rent)}</p>
+                  <p className="rent-amt">{inr(needs ? s.amount : monthlyDue(tt))}</p>
                   <p className="small">
                     {s.status === 'overdue' && `Since ${fmtDate(s.due)} · ${-s.days} days late${s.months > 1 ? ` · ${s.months} months` : ''}`}
                     {s.status === 'today' && 'Due today'}
@@ -137,6 +137,7 @@ export function TenantSheet({ id, onClose }) {
               <Info label="Monthly rent" value={inr(tt.rent)} />
               <Info label="Due date" value={`${ordinal(tt.dueDay)} of every month`} />
               <Info label="Deposit" value={tt.deposit ? inr(tt.deposit) : '—'} />
+              <Info label="Maintenance" value={tt.maintenance ? `${inr(tt.maintenance)} ${tt.maintenanceMonthly ? 'every month' : 'one-time'}` : '—'} />
               <Info label="Moved in" value={tt.joinedOn ? fmtDate(tt.joinedOn, { day: 'numeric', month: 'short', year: 'numeric' }) : '—'} />
               <Info label="Occupation" value={tt.occupation} />
               <Info label="Reminders via" value={{ whatsapp: 'WhatsApp', email: 'Email', both: 'WhatsApp + Email' }[tt.channel]} />
@@ -172,7 +173,7 @@ export function TenantSheet({ id, onClose }) {
                       {pay ? (
                         <button className="btn xs ghost" onClick={() => { undoPayment(pay.id); toast(`${monthName(period, true)} marked unpaid`) }}><Undo2 size={13} /> Undo</button>
                       ) : (
-                        <button className="btn xs" onClick={() => { markPaid(tt.id, period, tt.rent); toast(`${monthName(period, true)} marked paid`, { tone: 'ok' }) }}><Check size={13} /> Paid</button>
+                        <button className="btn xs" onClick={() => { markPaid(tt.id, period, monthlyDue(tt)); toast(`${monthName(period, true)} marked paid`, { tone: 'ok' }) }}><Check size={13} /> Paid</button>
                       )}
                     </div>
                   ))}
@@ -201,7 +202,7 @@ function Info({ label, value, wide }) {
 export function TenantFormSheet({ open, onClose, tenant, houseId }) {
   const { owner, houses } = useOwner()
   const toast = useToast()
-  const blank = { name: '', phone: '', email: '', room: '', rent: '', deposit: '', dueDay: 5, joinedOn: isoDay(new Date()), occupation: '', emergencyName: '', emergencyPhone: '', idType: 'Aadhaar', channel: 'whatsapp', notes: '', photo: '', idDoc: null, houseId }
+  const blank = { name: '', phone: '', email: '', room: '', rent: '', deposit: '', maintenance: '', maintenanceMonthly: false, dueDay: 5, joinedOn: isoDay(new Date()), occupation: '', emergencyName: '', emergencyPhone: '', idType: 'Aadhaar', channel: 'whatsapp', notes: '', photo: '', idDoc: null, houseId }
   const [f, setF] = useState(blank)
   useEffect(() => { if (open) setF(tenant ? { ...blank, ...tenant } : blank) }, [open]) // eslint-disable-line react-hooks/exhaustive-deps
   const set = (k) => (e) => setF((x) => ({ ...x, [k]: e?.target ? e.target.value : e }))
@@ -224,13 +225,13 @@ export function TenantFormSheet({ open, onClose, tenant, houseId }) {
   }
 
   return (
-    <Sheet open={open} onClose={onClose} title={tenant ? 'Edit resident' : 'Add a resident'} subtitle={tenant ? tenant.name : 'You can also send them the invite link to fill this in themselves.'} size="lg">
+    <Sheet open={open} onClose={onClose} title={tenant ? 'Edit resident' : 'Add a resident'} subtitle={tenant ? tenant.name : 'Fields marked * are required.'} size="lg">
       <form className="stack" onSubmit={submit}>
         <PhotoPick value={f.photo} onChange={set('photo')} name={f.name} />
         <div className="grid-2">
-          <Field label="Full name" value={f.name} onChange={set('name')} required />
-          <Field label="Mobile" type="tel" value={f.phone} onChange={set('phone')} required placeholder="98765 43210" />
-          <Field label="Email" type="email" value={f.email} onChange={set('email')} required placeholder="For email reminders" />
+          <Field label="Full name *" value={f.name} onChange={set('name')} required />
+          <Field label="Mobile *" type="tel" value={f.phone} onChange={set('phone')} required placeholder="98765 43210" />
+          <Field label="Email (optional)" type="email" value={f.email} onChange={set('email')} placeholder="For email reminders" />
           <Field label="Occupation" value={f.occupation} onChange={set('occupation')} placeholder="Student, engineer…" />
         </div>
         <h4 className="sub-head">Stay</h4>
@@ -241,11 +242,21 @@ export function TenantFormSheet({ open, onClose, tenant, houseId }) {
             </select>
           </Field>
           <Field label="Room / bed" value={f.room} onChange={set('room')} placeholder="101-A" />
-          <Field label="Moved in" type="date" value={f.joinedOn} onChange={set('joinedOn')} required />
-          <Field label="Monthly rent (₹)" type="number" min="0" value={f.rent} onChange={set('rent')} required />
-          <Field label="Deposit (₹)" type="number" min="0" value={f.deposit} onChange={set('deposit')} required />
-          <Field label="Rent due on (day)" type="number" min="1" max="28" value={f.dueDay} onChange={set('dueDay')} required hint="1–28 of each month" />
+          <Field label="Moved in *" type="date" value={f.joinedOn} onChange={set('joinedOn')} required />
+          <Field label="Monthly rent (₹) *" type="number" min="1" value={f.rent} onChange={set('rent')} required />
+          <Field label="Rent due on (day) *" type="number" min="1" max="30" value={f.dueDay} onChange={set('dueDay')} required hint="1–30. In shorter months, the last day." />
+          <Field label="Security deposit (₹) *" type="number" min="0" value={f.deposit} onChange={set('deposit')} required hint="Refundable. Enter 0 if none." />
+          <Field label="Maintenance (₹)" type="number" min="0" value={f.maintenance} onChange={set('maintenance')} placeholder="0" />
+          <Field label="Maintenance is charged">
+            <select value={f.maintenanceMonthly ? 'monthly' : 'once'} onChange={(e) => setF((x) => ({ ...x, maintenanceMonthly: e.target.value === 'monthly' }))}>
+              <option value="once">One-time</option>
+              <option value="monthly">Every month, with rent</option>
+            </select>
+          </Field>
         </div>
+        {f.maintenanceMonthly && Number(f.maintenance) > 0 && (
+          <p className="hint-box">Each month’s total due: {inr((Number(f.rent) || 0) + (Number(f.maintenance) || 0))} (rent + maintenance)</p>
+        )}
         <h4 className="sub-head">ID & safety</h4>
         <div className="grid-2">
           <Field label="ID type">
@@ -261,8 +272,8 @@ export function TenantFormSheet({ open, onClose, tenant, houseId }) {
         </div>
         <DocPick value={f.idDoc} onChange={set('idDoc')} label="ID proof" />
         <div className="grid-2">
-          <Field label="Emergency contact name" value={f.emergencyName} onChange={set('emergencyName')} required />
-          <Field label="Emergency contact phone" type="tel" value={f.emergencyPhone} onChange={set('emergencyPhone')} required />
+          <Field label="Emergency contact name *" value={f.emergencyName} onChange={set('emergencyName')} required />
+          <Field label="Emergency contact phone *" type="tel" value={f.emergencyPhone} onChange={set('emergencyPhone')} required />
         </div>
         <Field label="Notes (only you see these)">
           <textarea rows={2} value={f.notes} onChange={set('notes')} />
@@ -294,7 +305,7 @@ export function ReminderSheet({ id, onClose }) {
   }
 
   return (
-    <Sheet open={!!t} onClose={onClose} title="Send a reminder" subtitle={t && `${t.name} · ${inr(states[t.id].amount || t.rent)}`} size="md">
+    <Sheet open={!!t} onClose={onClose} title="Send a reminder" subtitle={t && `${t.name} · ${inr(states[t.id].amount || monthlyDue(t))}`} size="md">
       {t && (
         <div className="stack">
           <div className="wa-preview edit">
@@ -361,7 +372,7 @@ export function BulkRemindSheet({ group, onClose }) {
                   <Avatar name={t.name} src={t.photo} size={40} />
                   <div className="row-main">
                     <strong>{t.name}</strong>
-                    <small>{inr(st.amount || t.rent)} · {houseOf[t.houseId]?.name}{t.room ? ` · ${t.room}` : ''}</small>
+                    <small>{inr(st.amount || monthlyDue(t))} · {houseOf[t.houseId]?.name}{t.room ? ` · ${t.room}` : ''}</small>
                     {did && <small className="row-due paid">Sent on {did === 'whatsapp' ? 'WhatsApp' : 'email'}</small>}
                   </div>
                   <div className="row-actions">
@@ -394,7 +405,7 @@ export function PaySheet({ id, onClose }) {
   useEffect(() => {
     if (!t) return
     setSel(options)
-    setAmount(String(options.length * t.rent))
+    setAmount(String(options.length * monthlyDue(t)))
     setMethod('UPI')
     setDate(isoDay(new Date()))
   }, [id]) // eslint-disable-line react-hooks/exhaustive-deps
@@ -402,7 +413,7 @@ export function PaySheet({ id, onClose }) {
   const toggle = (p) => {
     const next = sel.includes(p) ? sel.filter((x) => x !== p) : [...sel, p].sort()
     setSel(next)
-    setAmount(String(next.length * t.rent))
+    setAmount(String(next.length * monthlyDue(t)))
   }
   const submit = (e) => {
     e.preventDefault()
@@ -418,7 +429,7 @@ export function PaySheet({ id, onClose }) {
   }
 
   return (
-    <Sheet open={!!t} onClose={onClose} title="Record payment" subtitle={t && `${t.name} · ${inr(t.rent)} a month`} size="sm">
+    <Sheet open={!!t} onClose={onClose} title="Record payment" subtitle={t && `${t.name} · ${inr(monthlyDue(t))} a month`} size="sm">
       {t && (
         <form className="stack" onSubmit={submit}>
           <div className="field">

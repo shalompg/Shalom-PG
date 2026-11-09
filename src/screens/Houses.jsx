@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { motion } from 'framer-motion'
 import { Plus, ArrowLeft, Pencil, Trash2, UserPlus, MapPin, Users } from 'lucide-react'
-import { addHouse, updateHouse, deleteHouse, periodOf, today } from '../store'
+import { addHouse, updateHouse, deleteHouse, periodOf, today, monthlyDue } from '../store'
 import { inr } from '../reminders'
 import { Field, Sheet, Empty, listParent, listItem, useToast, ease } from '../ui'
 import { go } from '../router'
@@ -32,7 +32,7 @@ function houseNumbers(h, tenants, states, payments) {
   const cur = periodOf(today())
   const live = tenants.filter((t) => t.houseId === h.id && t.active)
   const ids = new Set(live.map((t) => t.id))
-  const expected = live.reduce((a, t) => a + t.rent, 0)
+  const expected = live.reduce((a, t) => a + monthlyDue(t), 0)
   const collected = payments.filter((p) => ids.has(p.tenantId) && p.period === cur).reduce((a, p) => a + p.amount, 0)
   const late = live.filter((t) => states[t.id].status === 'overdue').length
   return { live, expected, collected, late }
